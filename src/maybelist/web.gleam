@@ -1,0 +1,418 @@
+import gleam/int
+import gleam/list as gleam_list
+import gleam/option.{type Option, None, Some}
+import gleam/string
+import lustre/attribute
+import lustre/effect.{type Effect}
+import lustre/element.{type Element}
+import lustre/element/html
+import lustre/event
+import maybelist/list as maybe_list
+
+pub type Model {
+  Model(
+    maybe_list: maybe_list.MaybeList,
+    draft: String,
+    editing: Option(Int),
+    edit_draft: String,
+  )
+}
+
+pub type Msg {
+  UpdateDraft(String)
+  AddItem
+  StartEditing(Int, String)
+  UpdateEditDraft(String)
+  SaveEdit(Int)
+  CancelEdit
+  ToggleDecided(Int)
+  DeleteItem(Int)
+}
+
+pub fn init(_arguments: Nil) -> #(Model, Effect(Msg)) {
+  #(Model(maybe_list.example(), "", None, ""), effect.none())
+}
+
+pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
+  let updated = case message {
+    UpdateDraft(value) -> Model(..model, draft: value)
+    AddItem -> {
+      let updated_list = maybe_list.add(model.maybe_list, model.draft)
+      case updated_list == model.maybe_list {
+        True -> model
+        False -> Model(..model, maybe_list: updated_list, draft: "")
+      }
+    }
+    StartEditing(id, title) ->
+      Model(..model, editing: Some(id), edit_draft: title)
+    UpdateEditDraft(value) -> Model(..model, edit_draft: value)
+    SaveEdit(id) ->
+      case string.trim(model.edit_draft) {
+        "" -> model
+        _ ->
+          Model(
+            ..model,
+            maybe_list: maybe_list.rename(
+              model.maybe_list,
+              id,
+              model.edit_draft,
+            ),
+            editing: None,
+            edit_draft: "",
+          )
+      }
+    CancelEdit -> Model(..model, editing: None, edit_draft: "")
+    ToggleDecided(id) ->
+      Model(
+        ..model,
+        maybe_list: maybe_list.toggle_decided(model.maybe_list, id),
+      )
+    DeleteItem(id) ->
+      Model(
+        ..model,
+        maybe_list: maybe_list.delete(model.maybe_list, id),
+        editing: case model.editing {
+          Some(editing_id) if editing_id == id -> None
+          current -> current
+        },
+      )
+  }
+  #(updated, effect.none())
+}
+
+pub fn view(model: Model) -> Element(Msg) {
+  let open_count = maybe_list.undecided_count(model.maybe_list)
+  html.div(
+    [
+      attribute.class(
+        "min-h-screen bg-stone-50 text-stone-900 selection:bg-lime-200",
+      ),
+    ],
+    [
+      background_decoration(),
+      html.main(
+        [
+          attribute.class(
+            "relative mx-auto flex min-h-screen w-full max-w-3xl flex-col px-5 py-8 sm:px-8 sm:py-14",
+          ),
+        ],
+        [
+          header_view(),
+          html.section([attribute.class("mt-12 sm:mt-16")], [
+            html.div(
+              [attribute.class("mb-4 flex items-end justify-between gap-4")],
+              [
+                html.div([], [
+                  html.p(
+                    [
+                      attribute.class(
+                        "text-xs font-bold uppercase tracking-[0.2em] text-stone-400",
+                      ),
+                    ],
+                    [html.text("Productivity, allegedly")],
+                  ),
+                  html.h2(
+                    [
+                      attribute.class(
+                        "mt-1 text-2xl font-semibold tracking-tight",
+                      ),
+                    ],
+                    [html.text("What are we avoiding today?")],
+                  ),
+                ]),
+                html.p(
+                  [attribute.class("shrink-0 pb-1 text-sm text-stone-500")],
+                  [
+                    html.strong(
+                      [attribute.class("font-semibold text-stone-800")],
+                      [html.text(int.to_string(open_count))],
+                    ),
+                    html.text(case open_count {
+                      1 -> " loose end"
+                      _ -> " loose ends"
+                    }),
+                  ],
+                ),
+              ],
+            ),
+            add_form(model),
+            item_list(model),
+          ]),
+          footer_view(),
+        ],
+      ),
+    ],
+  )
+}
+
+fn header_view() -> Element(Msg) {
+  html.header([], [
+    html.div(
+      [
+        attribute.class(
+          "inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-stone-600 shadow-sm backdrop-blur",
+        ),
+      ],
+      [
+        html.span([attribute.class("h-2 w-2 rounded-full bg-lime-400")], []),
+        html.text("Productivity-adjacent"),
+      ],
+    ),
+    html.h1(
+      [
+        attribute.class(
+          "mt-6 text-5xl font-bold leading-[0.95] tracking-[-0.055em] text-stone-950 sm:text-7xl",
+        ),
+      ],
+      [
+        html.text("Maybe"),
+        html.span([attribute.class("text-lime-500")], [html.text(".")]),
+        html.br([]),
+        html.span([attribute.class("text-stone-400")], [html.text("Just")]),
+        html.text(" None"),
+      ],
+    ),
+    html.p(
+      [
+        attribute.class(
+          "mt-6 max-w-lg text-base leading-7 text-stone-600 sm:text-lg",
+        ),
+      ],
+      [
+        html.text(
+          "For everything you absolutely intend to do. Eventually. Probably.",
+        ),
+      ],
+    ),
+  ])
+}
+
+fn add_form(model: Model) -> Element(Msg) {
+  html.form(
+    [
+      event.on_submit(fn(_) { AddItem }),
+      attribute.class(
+        "group flex gap-2 rounded-2xl border border-stone-200 bg-white p-2 shadow-sm transition focus-within:border-stone-400 focus-within:shadow-md",
+      ),
+    ],
+    [
+      html.input([
+        attribute.type_("text"),
+        attribute.name("maybe"),
+        attribute.value(model.draft),
+        attribute.placeholder("Pretend you'll do something…"),
+        attribute.aria_label("A new possibility"),
+        attribute.class(
+          "min-w-0 flex-1 bg-transparent px-3 py-2.5 text-base outline-none placeholder:text-stone-400",
+        ),
+        event.on_input(UpdateDraft),
+      ]),
+      html.button(
+        [
+          attribute.type_("submit"),
+          attribute.disabled(string.trim(model.draft) == ""),
+          attribute.class(
+            "rounded-xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-lime-500 hover:text-stone-950 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400 sm:px-5",
+          ),
+        ],
+        [html.text("Add to limbo")],
+      ),
+    ],
+  )
+}
+
+fn item_list(model: Model) -> Element(Msg) {
+  case maybe_list.items(model.maybe_list) {
+    [] ->
+      html.div(
+        [
+          attribute.class(
+            "mt-5 rounded-2xl border border-dashed border-stone-300 px-6 py-14 text-center",
+          ),
+        ],
+        [
+          html.p([attribute.class("text-3xl")], [html.text("¯\\_(ツ)_/¯")]),
+          html.p([attribute.class("mt-4 font-semibold")], [
+            html.text("Suspiciously empty"),
+          ]),
+          html.p([attribute.class("mt-1 text-sm text-stone-500")], [
+            html.text("Either you're thriving or you forgot everything."),
+          ]),
+        ],
+      )
+    items ->
+      html.ul(
+        [attribute.class("mt-5 space-y-3")],
+        gleam_list.map(items, fn(item) { item_view(item, model) }),
+      )
+  }
+}
+
+fn item_view(item: maybe_list.MaybeItem, model: Model) -> Element(Msg) {
+  let maybe_list.MaybeItem(id, title, decided) = item
+  let is_editing = case model.editing {
+    Some(editing_id) -> editing_id == id
+    None -> False
+  }
+  html.li(
+    [
+      attribute.class(
+        "group rounded-2xl border bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+      ),
+      attribute.classes([
+        #("border-stone-200", !decided),
+        #("border-lime-200 bg-lime-50/40", decided),
+      ]),
+    ],
+    case is_editing {
+      True -> edit_view(id, model.edit_draft)
+      False -> display_view(id, title, decided)
+    },
+  )
+}
+
+fn display_view(id: Int, title: String, decided: Bool) -> List(Element(Msg)) {
+  [
+    html.div([attribute.class("flex items-center gap-3 p-3 sm:p-4")], [
+      html.button(
+        [
+          attribute.type_("button"),
+          event.on_click(ToggleDecided(id)),
+          attribute.aria_label(case decided {
+            True -> "Return to maybe"
+            False -> "Mark as decided"
+          }),
+          attribute.class(
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-sm font-bold transition",
+          ),
+          attribute.classes([
+            #(
+              "border-stone-300 text-transparent hover:border-lime-400 hover:bg-lime-50",
+              !decided,
+            ),
+            #("border-lime-400 bg-lime-400 text-stone-950", decided),
+          ]),
+        ],
+        [html.text("✓")],
+      ),
+      html.div([attribute.class("min-w-0 flex-1")], [
+        html.p(
+          [
+            attribute.class("break-words font-medium leading-6"),
+            attribute.classes([
+              #("text-stone-400 line-through decoration-stone-300", decided),
+            ]),
+          ],
+          [html.text(title)],
+        ),
+        html.p([attribute.class("mt-0.5 text-xs font-medium text-stone-400")], [
+          html.text(case decided {
+            True -> "Look at you, deciding things."
+            False -> "Commitment pending"
+          }),
+        ]),
+      ]),
+      html.div(
+        [
+          attribute.class(
+            "flex shrink-0 gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100",
+          ),
+        ],
+        [
+          icon_button("Edit", "✎", StartEditing(id, title)),
+          icon_button("Delete", "×", DeleteItem(id)),
+        ],
+      ),
+    ]),
+  ]
+}
+
+fn edit_view(id: Int, value: String) -> List(Element(Msg)) {
+  [
+    html.form(
+      [
+        event.on_submit(fn(_) { SaveEdit(id) }),
+        attribute.class("flex items-center gap-2 p-3 sm:p-4"),
+      ],
+      [
+        html.input([
+          attribute.type_("text"),
+          attribute.value(value),
+          attribute.autofocus(True),
+          attribute.aria_label("Edit possibility"),
+          attribute.class(
+            "min-w-0 flex-1 rounded-xl border border-stone-300 bg-stone-50 px-3 py-2 text-sm outline-none transition focus:border-stone-600 focus:bg-white",
+          ),
+          event.on_input(UpdateEditDraft),
+        ]),
+        html.button(
+          [
+            attribute.type_("submit"),
+            attribute.class(
+              "rounded-lg bg-stone-900 px-3 py-2 text-sm font-semibold text-white hover:bg-lime-500 hover:text-stone-950",
+            ),
+          ],
+          [html.text("Save")],
+        ),
+        html.button(
+          [
+            attribute.type_("button"),
+            event.on_click(CancelEdit),
+            attribute.class(
+              "rounded-lg px-2 py-2 text-sm font-medium text-stone-500 hover:bg-stone-100 hover:text-stone-900",
+            ),
+          ],
+          [html.text("Cancel")],
+        ),
+      ],
+    ),
+  ]
+}
+
+fn icon_button(label: String, icon: String, message: Msg) -> Element(Msg) {
+  html.button(
+    [
+      attribute.type_("button"),
+      event.on_click(message),
+      attribute.aria_label(label),
+      attribute.title(label),
+      attribute.class(
+        "flex h-9 w-9 items-center justify-center rounded-lg text-lg text-stone-400 transition hover:bg-stone-100 hover:text-stone-900",
+      ),
+    ],
+    [html.text(icon)],
+  )
+}
+
+fn background_decoration() -> Element(Msg) {
+  html.div(
+    [attribute.class("pointer-events-none fixed inset-0 overflow-hidden")],
+    [
+      html.div(
+        [
+          attribute.class(
+            "absolute -right-32 -top-32 h-80 w-80 rounded-full bg-lime-200/40 blur-3xl",
+          ),
+        ],
+        [],
+      ),
+      html.div(
+        [
+          attribute.class(
+            "absolute -bottom-40 -left-40 h-96 w-96 rounded-full bg-amber-100/60 blur-3xl",
+          ),
+        ],
+        [],
+      ),
+    ],
+  )
+}
+
+fn footer_view() -> Element(Msg) {
+  html.footer(
+    [attribute.class("mt-auto pt-16 text-center text-xs text-stone-400")],
+    [
+      html.text("Built for decisive action. Just not today."),
+    ],
+  )
+}
