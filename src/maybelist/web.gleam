@@ -6,15 +6,28 @@ import lustre/attribute
 import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
+import lustre/element/svg
 import lustre/event
 import maybelist/list as maybe_list
+import maybelist/serialization
+import support/confirmation
+import support/local_storage
+
+const storage_key = "maybelist.data"
+
+pub type PersistenceStatus {
+  Loading
+  Ready
+  PersistenceFailed
+}
 
 pub type Model {
   Model(
     maybe_list: maybe_list.MaybeList,
     draft: String,
-    editing: Option(Int),
+    editing_item_id: Option(Int),
     edit_draft: String,
+    persistence_status: PersistenceStatus,
   )
 }
 
@@ -26,11 +39,28 @@ pub type Msg {
   SaveEdit(Int)
   CancelEdit
   ToggleDecided(Int)
+  RequestDeleteItem(Int)
   DeleteItem(Int)
+  StorageLoaded(local_storage.LoadResult(maybe_list.MaybeList))
+  StorageSaved(local_storage.SaveResult)
 }
 
 pub fn init(_arguments: Nil) -> #(Model, Effect(Msg)) {
-  #(Model(maybe_list.example(), "", None, ""), effect.none())
+  #(
+    Model(
+      maybe_list: maybe_list.example(),
+      draft: "",
+      editing_item_id: None,
+      edit_draft: "",
+      persistence_status: Loading,
+    ),
+    local_storage.load(
+      key: storage_key,
+      reader: serialization.decoder(),
+      writer: serialization.encode,
+      to_message: StorageLoaded,
+    ),
+  )
 }
 
 pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
@@ -44,7 +74,7 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
       }
     }
     StartEditing(id, title) ->
-      Model(..model, editing: Some(id), edit_draft: title)
+      Model(..model, editing_item_id: Some(id), edit_draft: title)
     UpdateEditDraft(value) -> Model(..model, edit_draft: value)
     SaveEdit(id) ->
       case string.trim(model.edit_draft) {
@@ -53,31 +83,78 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
           Model(
             ..model,
             maybe_list: maybe_list.rename(
-              model.maybe_list,
-              id,
-              model.edit_draft,
+              maybe_list: model.maybe_list,
+              id: id,
+              title: model.edit_draft,
             ),
-            editing: None,
+            editing_item_id: None,
             edit_draft: "",
           )
       }
-    CancelEdit -> Model(..model, editing: None, edit_draft: "")
+    CancelEdit -> Model(..model, editing_item_id: None, edit_draft: "")
     ToggleDecided(id) ->
       Model(
         ..model,
         maybe_list: maybe_list.toggle_decided(model.maybe_list, id),
       )
+    RequestDeleteItem(_) -> model
     DeleteItem(id) ->
       Model(
         ..model,
         maybe_list: maybe_list.delete(model.maybe_list, id),
-        editing: case model.editing {
+        editing_item_id: case model.editing_item_id {
           Some(editing_id) if editing_id == id -> None
           current -> current
         },
       )
+    StorageLoaded(result) ->
+      case result {
+        local_storage.Loaded(saved_list) ->
+          Model(..model, maybe_list: saved_list, persistence_status: Ready)
+        local_storage.Missing -> Model(..model, persistence_status: Ready)
+        local_storage.InvalidData | local_storage.LoadUnavailable ->
+          Model(..model, persistence_status: PersistenceFailed)
+      }
+    StorageSaved(result) ->
+      case result {
+        local_storage.Saved -> Model(..model, persistence_status: Ready)
+        local_storage.WriteFailed | local_storage.SaveUnavailable ->
+          Model(..model, persistence_status: PersistenceFailed)
+      }
   }
-  #(updated, effect.none())
+
+  let persistence_effect = case
+    should_persist(message),
+    updated.maybe_list == model.maybe_list
+  {
+    True, False ->
+      local_storage.save(
+        key: storage_key,
+        value: updated.maybe_list,
+        reader: serialization.decoder(),
+        writer: serialization.encode,
+        to_message: StorageSaved,
+      )
+    _, _ -> effect.none()
+  }
+
+  let confirmation_effect = case message {
+    RequestDeleteItem(id) ->
+      confirmation.ask(
+        "Delete this possibility? This decision is suspiciously permanent.",
+        on_confirmation: DeleteItem(id),
+      )
+    _ -> effect.none()
+  }
+
+  #(updated, effect.batch([persistence_effect, confirmation_effect]))
+}
+
+fn should_persist(message: Msg) -> Bool {
+  case message {
+    AddItem | SaveEdit(_) | ToggleDecided(_) | DeleteItem(_) -> True
+    _ -> False
+  }
 }
 
 pub fn view(model: Model) -> Element(Msg) {
@@ -137,12 +214,36 @@ pub fn view(model: Model) -> Element(Msg) {
             ),
             add_form(model),
             item_list(model),
+            persistence_notice(model.persistence_status),
           ]),
           footer_view(),
         ],
       ),
     ],
   )
+}
+
+fn persistence_notice(status: PersistenceStatus) -> Element(Msg) {
+  case status {
+    Loading ->
+      html.p([attribute.class("mt-3 text-center text-xs text-stone-400")], [
+        html.text("Recovering your unresolved business…"),
+      ])
+    Ready -> html.text("")
+    PersistenceFailed ->
+      html.p(
+        [
+          attribute.class(
+            "mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-center text-xs text-amber-800",
+          ),
+        ],
+        [
+          html.text(
+            "Your maybes are staying in this tab. Even the browser declined to commit.",
+          ),
+        ],
+      )
+  }
 }
 
 fn header_view() -> Element(Msg) {
@@ -169,7 +270,7 @@ fn header_view() -> Element(Msg) {
         html.span([attribute.class("text-lime-500")], [html.text(".")]),
         html.br([]),
         html.span([attribute.class("text-stone-400")], [html.text("Just")]),
-        html.text(" None"),
+        html.text(" Nothing"),
       ],
     ),
     html.p(
@@ -199,6 +300,7 @@ fn add_form(model: Model) -> Element(Msg) {
       html.input([
         attribute.type_("text"),
         attribute.name("maybe"),
+        attribute.autocomplete("off"),
         attribute.value(model.draft),
         attribute.placeholder("Pretend you'll do something…"),
         attribute.aria_label("A new possibility"),
@@ -250,7 +352,7 @@ fn item_list(model: Model) -> Element(Msg) {
 
 fn item_view(item: maybe_list.MaybeItem, model: Model) -> Element(Msg) {
   let maybe_list.MaybeItem(id, title, decided) = item
-  let is_editing = case model.editing {
+  let is_editing = case model.editing_item_id {
     Some(editing_id) -> editing_id == id
     None -> False
   }
@@ -320,7 +422,7 @@ fn display_view(id: Int, title: String, decided: Bool) -> List(Element(Msg)) {
         ],
         [
           icon_button("Edit", "✎", StartEditing(id, title)),
-          icon_button("Delete", "×", DeleteItem(id)),
+          icon_button("Delete", "×", RequestDeleteItem(id)),
         ],
       ),
     ]),
@@ -410,9 +512,45 @@ fn background_decoration() -> Element(Msg) {
 
 fn footer_view() -> Element(Msg) {
   html.footer(
-    [attribute.class("mt-auto pt-16 text-center text-xs text-stone-400")],
+    [
+      attribute.class(
+        "mt-auto flex items-center justify-center gap-2 pt-16 text-center text-xs text-stone-400",
+      ),
+    ],
     [
       html.text("Built for decisive action. Just not today."),
+      html.a(
+        [
+          attribute.href("https://github.com/bmehder/gleam-maybe-list"),
+          attribute.target("_blank"),
+          attribute.rel("noreferrer"),
+          attribute.aria_label("View Maybe List on GitHub"),
+          attribute.class(
+            "rounded-md p-1 text-stone-300 transition hover:bg-stone-100 hover:text-stone-600 focus:outline-none focus:ring-2 focus:ring-lime-400",
+          ),
+        ],
+        [github_icon()],
+      ),
+    ],
+  )
+}
+
+fn github_icon() -> Element(Msg) {
+  html.svg(
+    [
+      attribute.width(16),
+      attribute.height(16),
+      attribute.attribute("viewBox", "0 0 24 24"),
+      attribute.attribute("fill", "currentColor"),
+      attribute.aria_hidden(True),
+    ],
+    [
+      svg.path([
+        attribute.attribute(
+          "d",
+          "M12 .7a11.3 11.3 0 0 0-3.6 22c.6.1.8-.2.8-.5v-2c-3.3.7-4-1.4-4-1.4-.5-1.3-1.2-1.6-1.2-1.6-1-.7.1-.7.1-.7 1.1.1 1.7 1.1 1.7 1.1 1 1.7 2.7 1.2 3.4.9.1-.7.4-1.2.8-1.5-2.7-.3-5.5-1.4-5.5-6a4.7 4.7 0 0 1 1.2-3.2 4.4 4.4 0 0 1 .1-3.2s1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2a4.4 4.4 0 0 1 .1 3.2 4.7 4.7 0 0 1 1.2 3.2c0 4.6-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5A11.3 11.3 0 0 0 12 .7Z",
+        ),
+      ]),
     ],
   )
 }

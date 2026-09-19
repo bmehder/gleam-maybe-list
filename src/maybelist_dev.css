@@ -1,0 +1,19 @@
+@import "tailwindcss";
+@source "../build/packages/timetravel/src";
+
+@theme {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html { font-family: var(--font-sans); }
+  button, input { font: inherit; }
+}
+
+/* Preserve Maybe List's roomy inspector columns with timetravel v0.1.0. */
+[data-time-travel-panel] > .grid {
+  grid-template-columns:
+    minmax(12rem, max-content)
+    minmax(20rem, max-content)
+    minmax(28rem, 1fr);
+}
