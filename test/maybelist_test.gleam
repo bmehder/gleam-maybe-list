@@ -1,7 +1,8 @@
 import gleam/json
+import gleam/option.{None, Some}
 import gleeunit
 import lustre/effect
-import maybelist/list
+import maybelist/list as item_list
 import maybelist/serialization
 import timetravel as time_travel
 
@@ -15,51 +16,54 @@ pub fn main() -> Nil {
 }
 
 pub fn add_trims_and_allocates_an_id_test() {
-  let updated = list.new() |> list.add("  Learn Gleam  ")
-  assert list.items(updated) == [list.MaybeItem(1, "Learn Gleam", False)]
+  let updated = item_list.new() |> item_list.add("  Learn Gleam  ")
+  assert item_list.items(updated) == [item_list.Item(1, "Learn Gleam", False)]
 }
 
 pub fn blank_titles_do_not_change_the_list_test() {
-  let original = list.new()
-  assert list.add(original, "   ") == original
-  assert list.rename(original, 1, "   ") == original
+  let original = item_list.new()
+  assert item_list.add(original, "   ") == original
+  assert item_list.rename(original, 1, "   ") == original
 }
 
 pub fn rename_preserves_decision_state_test() {
   let updated =
-    list.new()
-    |> list.add("Old idea")
-    |> list.toggle_decided(1)
-    |> list.rename(1, "New idea")
-  assert list.items(updated) == [list.MaybeItem(1, "New idea", True)]
+    item_list.new()
+    |> item_list.add("Old idea")
+    |> item_list.toggle_decided(1)
+    |> item_list.rename(1, "New idea")
+  assert item_list.items(updated) == [item_list.Item(1, "New idea", True)]
 }
 
 pub fn delete_removes_only_the_matching_item_test() {
   let updated =
-    list.new() |> list.add("First") |> list.add("Second") |> list.delete(1)
-  assert list.items(updated) == [list.MaybeItem(2, "Second", False)]
+    item_list.new()
+    |> item_list.add("First")
+    |> item_list.add("Second")
+    |> item_list.delete(1)
+  assert item_list.items(updated) == [item_list.Item(2, "Second", False)]
 }
 
 pub fn undecided_count_ignores_decided_items_test() {
-  let maybe_list =
-    list.new()
-    |> list.add("First")
-    |> list.add("Second")
-    |> list.toggle_decided(1)
-  assert list.undecided_count(maybe_list) == 1
+  let list_value =
+    item_list.new()
+    |> item_list.add("First")
+    |> item_list.add("Second")
+    |> item_list.toggle_decided(1)
+  assert item_list.undecided_count(list_value) == 1
 }
 
 pub fn serialization_round_trip_test() {
   let original =
-    list.new()
-    |> list.add("First")
-    |> list.add("Second")
-    |> list.toggle_decided(1)
+    item_list.new()
+    |> item_list.add("First")
+    |> item_list.add("Second")
+    |> item_list.toggle_decided(1)
 
   let encoded = original |> serialization.encode |> json.to_string
   let assert Ok(decoded) = json.parse(encoded, serialization.decoder())
 
-  assert list.items(decoded) == list.items(original)
+  assert item_list.items(decoded) == item_list.items(original)
 }
 
 pub fn serialization_rejects_unknown_versions_test() {
@@ -68,34 +72,46 @@ pub fn serialization_rejects_unknown_versions_test() {
 }
 
 pub fn restore_preserves_ids_and_continues_allocating_ids_test() {
-  let assert Ok(restored) =
-    list.restore([#(4, "First", False), #(9, "Third", True)])
-  let restored = list.add(restored, "Fourth")
+  let assert Some(restored) =
+    item_list.restore([
+      item_list.Item(id: 4, title: "First", decided: False),
+      item_list.Item(id: 9, title: "Third", decided: True),
+    ])
+  let restored = item_list.add(restored, "Fourth")
 
-  assert list.items(restored)
+  assert item_list.items(restored)
     == [
-      list.MaybeItem(10, "Fourth", False),
-      list.MaybeItem(4, "First", False),
-      list.MaybeItem(9, "Third", True),
+      item_list.Item(10, "Fourth", False),
+      item_list.Item(4, "First", False),
+      item_list.Item(9, "Third", True),
     ]
 }
 
 pub fn restore_rejects_invalid_identity_and_titles_test() {
-  assert list.restore([#(1, "One", False), #(1, "Duplicate", False)])
-    == Error(Nil)
-  assert list.restore([#(0, "No identity", False)]) == Error(Nil)
-  assert list.restore([#(1, "   ", False)]) == Error(Nil)
+  assert item_list.restore([
+      item_list.Item(id: 1, title: "One", decided: False),
+      item_list.Item(id: 1, title: "Duplicate", decided: False),
+    ])
+    == None
+  assert item_list.restore([
+      item_list.Item(id: 0, title: "No identity", decided: False),
+    ])
+    == None
+  assert item_list.restore([
+      item_list.Item(id: 1, title: "   ", decided: False),
+    ])
+    == None
 }
 
 pub fn time_travel_records_every_message_and_navigates_test() {
   let #(initial, _) =
     time_travel.init(arguments: Nil, with: fn(_) {
-      #(list.new(), effect.none())
+      #(item_list.new(), effect.none())
     })
 
   let update = fn(model, message) {
     case message {
-      Typed(title) -> #(list.add(model, title), effect.none())
+      Typed(title) -> #(item_list.add(model, title), effect.none())
       Committed -> #(model, effect.none())
     }
   }
@@ -113,10 +129,10 @@ pub fn time_travel_records_every_message_and_navigates_test() {
     )
 
   assert time_travel.position(typed_twice) == #(2, 2)
-  assert list.items(time_travel.current(typed_twice))
+  assert item_list.items(time_travel.current(typed_twice))
     == [
-      list.MaybeItem(2, "Two", False),
-      list.MaybeItem(1, "One", False),
+      item_list.Item(2, "Two", False),
+      item_list.Item(1, "One", False),
     ]
 
   let #(past, _) =
@@ -126,8 +142,8 @@ pub fn time_travel_records_every_message_and_navigates_test() {
       with: update,
     )
   assert time_travel.position(past) == #(1, 2)
-  assert list.items(time_travel.current(past))
-    == [list.MaybeItem(1, "One", False)]
+  assert item_list.items(time_travel.current(past))
+    == [item_list.Item(1, "One", False)]
 
   let #(present, _) =
     time_travel.update(

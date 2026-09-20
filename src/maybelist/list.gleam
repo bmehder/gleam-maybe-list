@@ -1,63 +1,65 @@
 import gleam/list
-import gleam/result
+import gleam/option.{type Option, None, Some}
 import gleam/string
+
+/// The identity of an item within a Maybe List.
+pub type ItemId =
+  Int
 
 /// A possibility in a Maybe List. This type belongs to the domain and has no
 /// knowledge of HTTP, browsers, storage, or Lustre.
-pub type MaybeItem {
-  MaybeItem(id: Int, title: String, decided: Bool)
+pub type Item {
+  Item(id: ItemId, title: String, decided: Bool)
 }
 
 /// The aggregate keeps ID allocation together with the items so every adapter
 /// (web UI, JSON API, or CLI) follows the same rules.
-pub opaque type MaybeList {
-  MaybeList(items: List(MaybeItem), next_id: Int)
+pub opaque type ItemList {
+  ItemList(items: List(Item), next_item_id: ItemId)
 }
 
-pub fn new() -> MaybeList {
-  MaybeList(items: [], next_id: 1)
+pub fn new() -> ItemList {
+  ItemList(items: [], next_item_id: 1)
 }
 
-pub fn example() -> MaybeList {
-  MaybeList(
+pub fn example() -> ItemList {
+  ItemList(
     items: [
-      MaybeItem(1, "Take a pottery class", False),
-      MaybeItem(2, "Plan a long weekend in Lisbon", False),
-      MaybeItem(3, "Start a tiny herb garden", True),
+      Item(1, "Take a pottery class", False),
+      Item(2, "Plan a long weekend in Lisbon", False),
+      Item(3, "Start a tiny herb garden", True),
     ],
-    next_id: 4,
+    next_item_id: 4,
   )
 }
 
 /// Reconstruct a list from boundary data without exposing its internal ID
 /// allocation. IDs must be positive and unique, and titles must not be blank.
-pub fn restore(entries: List(#(Int, String, Bool))) -> Result(MaybeList, Nil) {
-  use #(items, highest_id) <- result.try(restore_items(
-    entries,
-    seen_ids: [],
-    restored: [],
-    highest_id: 0,
-  ))
-  Ok(MaybeList(items: list.reverse(items), next_id: highest_id + 1))
+pub fn restore(entries: List(Item)) -> Option(ItemList) {
+  case restore_items(entries, seen_ids: [], restored: [], highest_id: 0) {
+    Some(#(items, highest_id)) ->
+      Some(ItemList(items: list.reverse(items), next_item_id: highest_id + 1))
+    None -> None
+  }
 }
 
 fn restore_items(
-  entries: List(#(Int, String, Bool)),
-  seen_ids seen_ids: List(Int),
-  restored restored: List(MaybeItem),
-  highest_id highest_id: Int,
-) -> Result(#(List(MaybeItem), Int), Nil) {
+  entries: List(Item),
+  seen_ids seen_ids: List(ItemId),
+  restored restored: List(Item),
+  highest_id highest_id: ItemId,
+) -> Option(#(List(Item), ItemId)) {
   case entries {
-    [] -> Ok(#(restored, highest_id))
-    [#(id, title, decided), ..rest] -> {
+    [] -> Some(#(restored, highest_id))
+    [Item(id, title, decided), ..rest] -> {
       let title = string.trim(title)
       case id > 0 && title != "" && !list.contains(seen_ids, id) {
-        False -> Error(Nil)
+        False -> None
         True ->
           restore_items(
             rest,
             seen_ids: [id, ..seen_ids],
-            restored: [MaybeItem(id, title, decided), ..restored],
+            restored: [Item(id, title, decided), ..restored],
             highest_id: case id > highest_id {
               True -> id
               False -> highest_id
@@ -69,37 +71,37 @@ fn restore_items(
 }
 
 /// Return the possibilities in display order.
-pub fn items(maybe_list: MaybeList) -> List(MaybeItem) {
-  maybe_list.items
+pub fn items(item_list: ItemList) -> List(Item) {
+  item_list.items
 }
 
-pub fn add(maybe_list: MaybeList, title: String) -> MaybeList {
+pub fn add(item_list: ItemList, title: String) -> ItemList {
   let title = string.trim(title)
   case title {
-    "" -> maybe_list
+    "" -> item_list
     _ ->
-      MaybeList(
-        items: [MaybeItem(maybe_list.next_id, title, False), ..maybe_list.items],
-        next_id: maybe_list.next_id + 1,
+      ItemList(
+        items: [Item(item_list.next_item_id, title, False), ..item_list.items],
+        next_item_id: item_list.next_item_id + 1,
       )
   }
 }
 
 pub fn rename(
-  maybe_list maybe_list: MaybeList,
-  id id: Int,
+  item_list item_list: ItemList,
+  id id: ItemId,
   title title: String,
-) -> MaybeList {
-  let title = string.trim(title)
-  case title {
-    "" -> maybe_list
+) -> ItemList {
+  let new_title = string.trim(title)
+  case new_title {
+    "" -> item_list
     _ ->
-      MaybeList(
-        ..maybe_list,
-        items: list.map(maybe_list.items, fn(item) {
+      ItemList(
+        ..item_list,
+        items: list.map(item_list.items, fn(item) {
           case item {
-            MaybeItem(item_id, _, decided) if item_id == id ->
-              MaybeItem(item_id, title, decided)
+            Item(item_id, _, decided) if item_id == id ->
+              Item(item_id, new_title, decided)
             _ -> item
           }
         }),
@@ -107,33 +109,33 @@ pub fn rename(
   }
 }
 
-pub fn toggle_decided(maybe_list: MaybeList, id: Int) -> MaybeList {
-  MaybeList(
-    ..maybe_list,
-    items: list.map(maybe_list.items, fn(item) {
+pub fn toggle_decided(item_list: ItemList, id: ItemId) -> ItemList {
+  ItemList(
+    ..item_list,
+    items: list.map(item_list.items, fn(item) {
       case item {
-        MaybeItem(item_id, title, decided) if item_id == id ->
-          MaybeItem(item_id, title, !decided)
+        Item(item_id, title, decided) if item_id == id ->
+          Item(item_id, title, !decided)
         _ -> item
       }
     }),
   )
 }
 
-pub fn delete(maybe_list: MaybeList, id: Int) -> MaybeList {
-  MaybeList(
-    ..maybe_list,
-    items: list.filter(maybe_list.items, fn(item) {
-      let MaybeItem(item_id, _, _) = item
+pub fn delete(item_list: ItemList, id: ItemId) -> ItemList {
+  ItemList(
+    ..item_list,
+    items: list.filter(item_list.items, fn(item) {
+      let Item(item_id, _, _) = item
       item_id != id
     }),
   )
 }
 
-pub fn undecided_count(maybe_list: MaybeList) -> Int {
-  maybe_list.items
+pub fn undecided_count(item_list: ItemList) -> Int {
+  item_list.items
   |> list.filter(fn(item) {
-    let MaybeItem(_, _, decided) = item
+    let Item(_, _, decided) = item
     decided == False
   })
   |> list.length

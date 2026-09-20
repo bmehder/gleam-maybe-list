@@ -48,7 +48,7 @@ application's `gleam.toml`:
 [dependencies]
 timetravel = {
   git = "https://github.com/bmehder/timetravel.git",
-  ref = "v0.1.0",
+  ref = "v0.2.0",
 }
 ```
 
@@ -71,13 +71,8 @@ Replace `my_app/web` with the module containing the application's existing
 `init`, `update`, and `view` functions. No changes to those functions or to the
 application's message and model types are required.
 
-The inspector uses Tailwind classes. Add `src/my_app_dev.css` alongside the
-development entry and explicitly include the dependency's source:
-
-```css
-@import "tailwindcss";
-@source "../build/packages/timetravel/src";
-```
+The inspector injects its own prefixed CSS, so it does not require Tailwind or
+any stylesheet configuration in the host application.
 
 Start the wrapped development application with:
 
@@ -96,12 +91,12 @@ it does not rerun messages or repeat HTTP requests, persistence writes, or other
 effects. Keeping the debugger in a separate entry point also keeps it out of the
 production bundle.
 
-For local, unminified development, `timetravel.application` can inspect values
-automatically. A minified deployment must instead use
-`timetravel.application_with_formatters` with application-owned functions that
-pattern match on messages and models. Maybe List's `maybelist_dev` entry shows a
-complete example. These formatters keep names such as `UpdateDraft` and `Model`
-stable when JavaScript minification renames compiled Gleam classes.
+`timetravel.application` inspects values automatically in unminified builds.
+JavaScript minifiers rename compiled Gleam constructors, so a minified debugger
+build instead needs `timetravel.application_with_formatters` and
+application-owned pattern-matching formatters. Maybe List deliberately deploys
+its development entry unminified so the public demo matches the simple local
+integration shown above. Its normal production entry can still be minified.
 
 ## Check and build
 

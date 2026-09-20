@@ -8,7 +8,7 @@ import lustre/element.{type Element}
 import lustre/element/html
 import lustre/element/svg
 import lustre/event
-import maybelist/list as maybe_list
+import maybelist/list as item_list
 import maybelist/serialization
 import support/confirmation
 import support/local_storage
@@ -23,33 +23,33 @@ pub type PersistenceStatus {
 
 pub type Model {
   Model(
-    maybe_list: maybe_list.MaybeList,
-    draft: String,
-    editing_item_id: Option(Int),
+    item_list: item_list.ItemList,
+    new_item_draft: String,
+    editing_item_id: Option(item_list.ItemId),
     edit_draft: String,
     persistence_status: PersistenceStatus,
   )
 }
 
 pub type Msg {
-  UpdateDraft(String)
+  UpdateNewItemDraft(String)
   AddItem
-  StartEditing(Int, String)
+  StartEditing(item_list.ItemId, String)
   UpdateEditDraft(String)
-  SaveEdit(Int)
+  SaveEdit(item_list.ItemId)
   CancelEdit
-  ToggleDecided(Int)
-  RequestDeleteItem(Int)
-  DeleteItem(Int)
-  StorageLoaded(local_storage.LoadResult(maybe_list.MaybeList))
+  ToggleDecided(item_list.ItemId)
+  RequestDeleteItem(item_list.ItemId)
+  DeleteItem(item_list.ItemId)
+  StorageLoaded(local_storage.LoadResult(item_list.ItemList))
   StorageSaved(local_storage.SaveResult)
 }
 
 pub fn init(_arguments: Nil) -> #(Model, Effect(Msg)) {
   #(
     Model(
-      maybe_list: maybe_list.example(),
-      draft: "",
+      item_list: item_list.example(),
+      new_item_draft: "",
       editing_item_id: None,
       edit_draft: "",
       persistence_status: Loading,
@@ -65,12 +65,12 @@ pub fn init(_arguments: Nil) -> #(Model, Effect(Msg)) {
 
 pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
   let updated = case message {
-    UpdateDraft(value) -> Model(..model, draft: value)
+    UpdateNewItemDraft(value) -> Model(..model, new_item_draft: value)
     AddItem -> {
-      let updated_list = maybe_list.add(model.maybe_list, model.draft)
-      case updated_list == model.maybe_list {
+      let updated_list = item_list.add(model.item_list, model.new_item_draft)
+      case updated_list == model.item_list {
         True -> model
-        False -> Model(..model, maybe_list: updated_list, draft: "")
+        False -> Model(..model, item_list: updated_list, new_item_draft: "")
       }
     }
     StartEditing(id, title) ->
@@ -82,8 +82,8 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
         _ ->
           Model(
             ..model,
-            maybe_list: maybe_list.rename(
-              maybe_list: model.maybe_list,
+            item_list: item_list.rename(
+              item_list: model.item_list,
               id: id,
               title: model.edit_draft,
             ),
@@ -93,24 +93,21 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
       }
     CancelEdit -> Model(..model, editing_item_id: None, edit_draft: "")
     ToggleDecided(id) ->
-      Model(
-        ..model,
-        maybe_list: maybe_list.toggle_decided(model.maybe_list, id),
-      )
+      Model(..model, item_list: item_list.toggle_decided(model.item_list, id))
     RequestDeleteItem(_) -> model
     DeleteItem(id) ->
       Model(
         ..model,
-        maybe_list: maybe_list.delete(model.maybe_list, id),
+        item_list: item_list.delete(model.item_list, id),
         editing_item_id: case model.editing_item_id {
           Some(editing_id) if editing_id == id -> None
-          current -> current
+          _ -> model.editing_item_id
         },
       )
     StorageLoaded(result) ->
       case result {
         local_storage.Loaded(saved_list) ->
-          Model(..model, maybe_list: saved_list, persistence_status: Ready)
+          Model(..model, item_list: saved_list, persistence_status: Ready)
         local_storage.Missing -> Model(..model, persistence_status: Ready)
         local_storage.InvalidData | local_storage.LoadUnavailable ->
           Model(..model, persistence_status: PersistenceFailed)
@@ -123,19 +120,17 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
       }
   }
 
-  let persistence_effect = case
-    should_persist(message),
-    updated.maybe_list == model.maybe_list
-  {
-    True, False ->
+  let persistence_effect = case message, updated.item_list == model.item_list {
+    StorageLoaded(_), _ -> effect.none()
+    _, False ->
       local_storage.save(
         key: storage_key,
-        value: updated.maybe_list,
+        value: updated.item_list,
         reader: serialization.decoder(),
         writer: serialization.encode,
         to_message: StorageSaved,
       )
-    _, _ -> effect.none()
+    _, True -> effect.none()
   }
 
   let confirmation_effect = case message {
@@ -150,15 +145,8 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
   #(updated, effect.batch([persistence_effect, confirmation_effect]))
 }
 
-fn should_persist(message: Msg) -> Bool {
-  case message {
-    AddItem | SaveEdit(_) | ToggleDecided(_) | DeleteItem(_) -> True
-    _ -> False
-  }
-}
-
 pub fn view(model: Model) -> Element(Msg) {
-  let open_count = maybe_list.undecided_count(model.maybe_list)
+  let open_count = item_list.undecided_count(model.item_list)
   html.div(
     [
       attribute.class(
@@ -301,18 +289,18 @@ fn add_form(model: Model) -> Element(Msg) {
         attribute.type_("text"),
         attribute.name("maybe"),
         attribute.autocomplete("off"),
-        attribute.value(model.draft),
+        attribute.value(model.new_item_draft),
         attribute.placeholder("Pretend you'll do something…"),
         attribute.aria_label("A new possibility"),
         attribute.class(
           "min-w-0 flex-1 bg-transparent px-3 py-2.5 text-base outline-none placeholder:text-stone-400",
         ),
-        event.on_input(UpdateDraft),
+        event.on_input(UpdateNewItemDraft),
       ]),
       html.button(
         [
           attribute.type_("submit"),
-          attribute.disabled(string.trim(model.draft) == ""),
+          attribute.disabled(string.trim(model.new_item_draft) == ""),
           attribute.class(
             "rounded-xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-lime-500 hover:text-stone-950 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-400 sm:px-5",
           ),
@@ -324,7 +312,7 @@ fn add_form(model: Model) -> Element(Msg) {
 }
 
 fn item_list(model: Model) -> Element(Msg) {
-  case maybe_list.items(model.maybe_list) {
+  case item_list.items(model.item_list) {
     [] ->
       html.div(
         [
@@ -350,8 +338,8 @@ fn item_list(model: Model) -> Element(Msg) {
   }
 }
 
-fn item_view(item: maybe_list.MaybeItem, model: Model) -> Element(Msg) {
-  let maybe_list.MaybeItem(id, title, decided) = item
+fn item_view(item: item_list.Item, model: Model) -> Element(Msg) {
+  let item_list.Item(id, title, decided) = item
   let is_editing = case model.editing_item_id {
     Some(editing_id) -> editing_id == id
     None -> False
@@ -373,7 +361,11 @@ fn item_view(item: maybe_list.MaybeItem, model: Model) -> Element(Msg) {
   )
 }
 
-fn display_view(id: Int, title: String, decided: Bool) -> List(Element(Msg)) {
+fn display_view(
+  id: item_list.ItemId,
+  title: String,
+  decided: Bool,
+) -> List(Element(Msg)) {
   [
     html.div([attribute.class("flex items-center gap-3 p-3 sm:p-4")], [
       html.button(
@@ -429,7 +421,7 @@ fn display_view(id: Int, title: String, decided: Bool) -> List(Element(Msg)) {
   ]
 }
 
-fn edit_view(id: Int, value: String) -> List(Element(Msg)) {
+fn edit_view(id: item_list.ItemId, value: String) -> List(Element(Msg)) {
   [
     html.form(
       [
