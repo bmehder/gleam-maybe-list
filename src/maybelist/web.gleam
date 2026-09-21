@@ -34,8 +34,8 @@ pub type Model {
 
 pub type Msg {
   UpdateNewItemDraft(String)
-  RequestAddItem
-  AddItem(item_list.ItemId, String)
+  SubmitNewItem
+  NewItemIdGenerated(item_list.ItemId, String)
   StartEditing(item_list.ItemId, String)
   UpdateEditDraft(String)
   SaveEdit(item_list.ItemId)
@@ -68,8 +68,8 @@ pub fn init(_arguments: Nil) -> #(Model, Effect(Msg)) {
 pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
   let updated = case message {
     UpdateNewItemDraft(value) -> Model(..model, new_item_draft: value)
-    RequestAddItem -> model
-    AddItem(id, title) -> {
+    SubmitNewItem -> model
+    NewItemIdGenerated(id, title) -> {
       let updated_list = item_list.add(model.item_list, id, title)
       case updated_list == model.item_list {
         True -> model
@@ -146,7 +146,7 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
   }
 
   let item_id_effect = case message {
-    RequestAddItem -> create_item(model.new_item_draft)
+    SubmitNewItem -> create_item(model.new_item_draft)
     _ -> effect.none()
   }
 
@@ -157,7 +157,7 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
 }
 
 fn create_item(title: String) -> Effect(Msg) {
-  effect.from(fn(dispatch) { dispatch(AddItem(uuid.v4(), title)) })
+  effect.from(fn(dispatch) { dispatch(NewItemIdGenerated(uuid.v4(), title)) })
 }
 
 pub fn view(model: Model) -> Element(Msg) {
@@ -294,7 +294,7 @@ fn header_view() -> Element(Msg) {
 fn add_form(model: Model) -> Element(Msg) {
   html.form(
     [
-      event.on_submit(fn(_) { RequestAddItem }),
+      event.on_submit(fn(_) { SubmitNewItem }),
       attribute.class(
         "group flex gap-2 rounded-2xl border border-stone-200 bg-white p-2 shadow-sm transition focus-within:border-stone-400 focus-within:shadow-md",
       ),
