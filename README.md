@@ -17,7 +17,7 @@ later support import/export and an API.
 
 The app loads once during initialization. Each `update` branch that changes the
 list explicitly returns a save effect, so the persistence behavior is visible
-beside the model change. A small `save_item_list` helper keeps the storage
+beside the model change. A small `save_to_local_storage` helper keeps the storage
 configuration in one place. Invalid or unavailable storage falls back safely to
 the example list.
 

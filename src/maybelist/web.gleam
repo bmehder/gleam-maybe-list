@@ -35,7 +35,7 @@ pub type Model {
 pub type Msg {
   UpdateNewItemDraft(String)
   SubmitNewItem
-  NewItemIdGenerated(item_list.ItemId, String)
+  NewItemReady(item_list.ItemId, String)
   StartEditing(item_list.ItemId, String)
   UpdateEditDraft(String)
   SaveEdit(item_list.ItemId)
@@ -72,14 +72,14 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
       effect.none(),
     )
     SubmitNewItem -> #(model, create_item(model.new_item_draft))
-    NewItemIdGenerated(id, title) -> {
+    NewItemReady(id, title) -> {
       let updated_list = item_list.add(model.item_list, id, title)
       case updated_list == model.item_list {
         True -> #(model, effect.none())
         False -> {
           let updated =
             Model(..model, item_list: updated_list, new_item_draft: "")
-          #(updated, save_item_list(updated.item_list))
+          #(updated, save_to_local_storage(updated.item_list))
         }
       }
     }
@@ -106,7 +106,7 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
               editing_item_id: None,
               edit_draft: "",
             )
-          #(updated, save_item_list(updated.item_list))
+          #(updated, save_to_local_storage(updated.item_list))
         }
       }
     CancelEdit -> #(
@@ -116,7 +116,7 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
     ToggleDecided(id) -> {
       let updated =
         Model(..model, item_list: item_list.toggle_decided(model.item_list, id))
-      #(updated, save_item_list(updated.item_list))
+      #(updated, save_to_local_storage(updated.item_list))
     }
     RequestDeleteItem(id) -> #(
       model,
@@ -135,7 +135,7 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
             _ -> model.editing_item_id
           },
         )
-      #(updated, save_item_list(updated.item_list))
+      #(updated, save_to_local_storage(updated.item_list))
     }
     StorageLoaded(result) -> #(
       case result {
@@ -158,7 +158,7 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
   }
 }
 
-fn save_item_list(item_list: item_list.ItemList) -> Effect(Msg) {
+fn save_to_local_storage(item_list: item_list.ItemList) -> Effect(Msg) {
   local_storage.save(
     key: storage_key,
     value: item_list,
@@ -169,7 +169,7 @@ fn save_item_list(item_list: item_list.ItemList) -> Effect(Msg) {
 }
 
 fn create_item(title: String) -> Effect(Msg) {
-  effect.from(fn(dispatch) { dispatch(NewItemIdGenerated(uuid.v4(), title)) })
+  effect.from(fn(dispatch) { dispatch(NewItemReady(uuid.v4(), title)) })
 }
 
 pub fn view(model: Model) -> Element(Msg) {
