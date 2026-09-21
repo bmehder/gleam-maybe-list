@@ -6,6 +6,7 @@
 
 # Generated production bundles
 /dist/
+/dist-dev/
 
 # Erlang crash and analysis files
 erl_crash.dump

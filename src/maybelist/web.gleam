@@ -12,6 +12,7 @@ import maybelist/list as item_list
 import maybelist/serialization
 import support/confirmation
 import support/local_storage
+import support/uuid
 
 const storage_key = "maybelist.data"
 
@@ -33,7 +34,8 @@ pub type Model {
 
 pub type Msg {
   UpdateNewItemDraft(String)
-  AddItem
+  RequestAddItem
+  AddItem(item_list.ItemId, String)
   StartEditing(item_list.ItemId, String)
   UpdateEditDraft(String)
   SaveEdit(item_list.ItemId)
@@ -66,8 +68,9 @@ pub fn init(_arguments: Nil) -> #(Model, Effect(Msg)) {
 pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
   let updated = case message {
     UpdateNewItemDraft(value) -> Model(..model, new_item_draft: value)
-    AddItem -> {
-      let updated_list = item_list.add(model.item_list, model.new_item_draft)
+    RequestAddItem -> model
+    AddItem(id, title) -> {
+      let updated_list = item_list.add(model.item_list, id, title)
       case updated_list == model.item_list {
         True -> model
         False -> Model(..model, item_list: updated_list, new_item_draft: "")
@@ -142,7 +145,19 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
     _ -> effect.none()
   }
 
-  #(updated, effect.batch([persistence_effect, confirmation_effect]))
+  let item_id_effect = case message {
+    RequestAddItem -> create_item(model.new_item_draft)
+    _ -> effect.none()
+  }
+
+  #(
+    updated,
+    effect.batch([persistence_effect, confirmation_effect, item_id_effect]),
+  )
+}
+
+fn create_item(title: String) -> Effect(Msg) {
+  effect.from(fn(dispatch) { dispatch(AddItem(uuid.v4(), title)) })
 }
 
 pub fn view(model: Model) -> Element(Msg) {
@@ -279,7 +294,7 @@ fn header_view() -> Element(Msg) {
 fn add_form(model: Model) -> Element(Msg) {
   html.form(
     [
-      event.on_submit(fn(_) { AddItem }),
+      event.on_submit(fn(_) { RequestAddItem }),
       attribute.class(
         "group flex gap-2 rounded-2xl border border-stone-200 bg-white p-2 shadow-sm transition focus-within:border-stone-400 focus-within:shadow-md",
       ),
