@@ -66,93 +66,105 @@ pub fn init(_arguments: Nil) -> #(Model, Effect(Msg)) {
 }
 
 pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
-  let updated = case message {
-    UpdateNewItemDraft(value) -> Model(..model, new_item_draft: value)
-    SubmitNewItem -> model
+  case message {
+    UpdateNewItemDraft(value) -> #(
+      Model(..model, new_item_draft: value),
+      effect.none(),
+    )
+    SubmitNewItem -> #(model, create_item(model.new_item_draft))
     NewItemIdGenerated(id, title) -> {
       let updated_list = item_list.add(model.item_list, id, title)
       case updated_list == model.item_list {
-        True -> model
-        False -> Model(..model, item_list: updated_list, new_item_draft: "")
+        True -> #(model, effect.none())
+        False -> {
+          let updated =
+            Model(..model, item_list: updated_list, new_item_draft: "")
+          #(updated, save_item_list(updated.item_list))
+        }
       }
     }
-    StartEditing(id, title) ->
-      Model(..model, editing_item_id: Some(id), edit_draft: title)
-    UpdateEditDraft(value) -> Model(..model, edit_draft: value)
+    StartEditing(id, title) -> #(
+      Model(..model, editing_item_id: Some(id), edit_draft: title),
+      effect.none(),
+    )
+    UpdateEditDraft(value) -> #(
+      Model(..model, edit_draft: value),
+      effect.none(),
+    )
     SaveEdit(id) ->
       case string.trim(model.edit_draft) {
-        "" -> model
-        _ ->
-          Model(
-            ..model,
-            item_list: item_list.rename(
-              item_list: model.item_list,
-              id: id,
-              title: model.edit_draft,
-            ),
-            editing_item_id: None,
-            edit_draft: "",
-          )
+        "" -> #(model, effect.none())
+        _ -> {
+          let updated =
+            Model(
+              ..model,
+              item_list: item_list.rename(
+                item_list: model.item_list,
+                id: id,
+                title: model.edit_draft,
+              ),
+              editing_item_id: None,
+              edit_draft: "",
+            )
+          #(updated, save_item_list(updated.item_list))
+        }
       }
-    CancelEdit -> Model(..model, editing_item_id: None, edit_draft: "")
-    ToggleDecided(id) ->
-      Model(..model, item_list: item_list.toggle_decided(model.item_list, id))
-    RequestDeleteItem(_) -> model
-    DeleteItem(id) ->
-      Model(
-        ..model,
-        item_list: item_list.delete(model.item_list, id),
-        editing_item_id: case model.editing_item_id {
-          Some(editing_id) if editing_id == id -> None
-          _ -> model.editing_item_id
-        },
-      )
-    StorageLoaded(result) ->
+    CancelEdit -> #(
+      Model(..model, editing_item_id: None, edit_draft: ""),
+      effect.none(),
+    )
+    ToggleDecided(id) -> {
+      let updated =
+        Model(..model, item_list: item_list.toggle_decided(model.item_list, id))
+      #(updated, save_item_list(updated.item_list))
+    }
+    RequestDeleteItem(id) -> #(
+      model,
+      confirmation.ask(
+        "Delete this possibility? This decision is suspiciously permanent.",
+        on_confirmation: DeleteItem(id),
+      ),
+    )
+    DeleteItem(id) -> {
+      let updated =
+        Model(
+          ..model,
+          item_list: item_list.delete(model.item_list, id),
+          editing_item_id: case model.editing_item_id {
+            Some(editing_id) if editing_id == id -> None
+            _ -> model.editing_item_id
+          },
+        )
+      #(updated, save_item_list(updated.item_list))
+    }
+    StorageLoaded(result) -> #(
       case result {
         local_storage.Loaded(saved_list) ->
           Model(..model, item_list: saved_list, persistence_status: Ready)
         local_storage.Missing -> Model(..model, persistence_status: Ready)
         local_storage.InvalidData | local_storage.LoadUnavailable ->
           Model(..model, persistence_status: PersistenceFailed)
-      }
-    StorageSaved(result) ->
+      },
+      effect.none(),
+    )
+    StorageSaved(result) -> #(
       case result {
         local_storage.Saved -> Model(..model, persistence_status: Ready)
         local_storage.WriteFailed | local_storage.SaveUnavailable ->
           Model(..model, persistence_status: PersistenceFailed)
-      }
+      },
+      effect.none(),
+    )
   }
+}
 
-  let persistence_effect = case message, updated.item_list == model.item_list {
-    StorageLoaded(_), _ -> effect.none()
-    _, False ->
-      local_storage.save(
-        key: storage_key,
-        value: updated.item_list,
-        reader: serialization.decoder(),
-        writer: serialization.encode,
-        to_message: StorageSaved,
-      )
-    _, True -> effect.none()
-  }
-
-  let confirmation_effect = case message {
-    RequestDeleteItem(id) ->
-      confirmation.ask(
-        "Delete this possibility? This decision is suspiciously permanent.",
-        on_confirmation: DeleteItem(id),
-      )
-    _ -> effect.none()
-  }
-
-  let item_id_effect = case message {
-    SubmitNewItem -> create_item(model.new_item_draft)
-    _ -> effect.none()
-  }
-
-  #(
-    updated,
-    effect.batch([persistence_effect, confirmation_effect, item_id_effect]),
+fn save_item_list(item_list: item_list.ItemList) -> Effect(Msg) {
+  local_storage.save(
+    key: storage_key,
+    value: item_list,
+    reader: serialization.decoder(),
+    writer: serialization.encode,
+    to_message: StorageSaved,
   )
 }
 

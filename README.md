@@ -15,8 +15,11 @@ generic `src/support/local_storage.gleam` module bridges Varasto to Lustre
 effects without knowing anything about Maybe List. The same serialized format can
 later support import/export and an API.
 
-The app loads once during initialization and saves only after successful domain
-changes. Invalid or unavailable storage falls back safely to the example list.
+The app loads once during initialization. Each `update` branch that changes the
+list explicitly returns a save effect, so the persistence behavior is visible
+beside the model change. A small `save_item_list` helper keeps the storage
+configuration in one place. Invalid or unavailable storage falls back safely to
+the example list.
 
 ## Run it locally
 
@@ -94,9 +97,10 @@ production bundle.
 `timetravel.application` inspects values automatically in unminified builds.
 JavaScript minifiers rename compiled Gleam constructors, so a minified debugger
 build instead needs `timetravel.application_with_formatters` and
-application-owned pattern-matching formatters. Maybe List deliberately deploys
-its development entry unminified so the public demo matches the simple local
-integration shown above. Its normal production entry can still be minified.
+application-owned pattern-matching formatters. Maybe List deploys its development
+entry unminified and supplies only a small demo formatter that keeps the
+top-level label as `Model` instead of a compiler-generated name such as `Model2`.
+Its normal production entry can still be minified.
 
 ## Check and build
 
