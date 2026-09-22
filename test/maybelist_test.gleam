@@ -7,8 +7,8 @@ import maybelist/serialization
 import timetravel as time_travel
 
 type TestMessage {
-  Typed(String)
-  Committed
+  UserTypedValue(String)
+  UserCommittedValue
 }
 
 const first_id = "00000000-0000-4000-8000-000000000001"
@@ -129,23 +129,23 @@ pub fn time_travel_records_every_message_and_navigates_test() {
 
   let update = fn(model, message) {
     case message {
-      Typed(title) -> #(
+      UserTypedValue(title) -> #(
         item_list.add(model, "id-" <> title, title),
         effect.none(),
       )
-      Committed -> #(model, effect.none())
+      UserCommittedValue -> #(model, effect.none())
     }
   }
   let #(typed_once, _) =
     time_travel.update(
       model: initial,
-      message: time_travel.App(Typed("One")),
+      message: time_travel.App(UserTypedValue("One")),
       with: update,
     )
   let #(typed_twice, _) =
     time_travel.update(
       model: typed_once,
-      message: time_travel.App(Typed("Two")),
+      message: time_travel.App(UserTypedValue("Two")),
       with: update,
     )
 
@@ -193,7 +193,7 @@ fn record_commits(model, remaining, update) {
       let #(next, _) =
         time_travel.update(
           model: model,
-          message: time_travel.App(Committed),
+          message: time_travel.App(UserCommittedValue),
           with: update,
         )
       record_commits(next, remaining - 1, update)

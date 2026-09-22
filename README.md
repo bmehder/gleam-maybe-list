@@ -21,6 +21,11 @@ beside the model change. A small `save_to_local_storage` helper keeps the storag
 configuration in one place. Invalid or unavailable storage falls back safely to
 the example list.
 
+Application messages describe events in subject-verb-object form, such as
+`UserSubmittedNewItem` and `LocalStorageReturnedItemList`. Editing state keeps
+the item ID and draft together as `Option(Editing)`, so the model cannot contain
+an editing ID without its corresponding draft.
+
 ## Run it locally
 
 ```sh

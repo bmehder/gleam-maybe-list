@@ -19,32 +19,35 @@ const storage_key = "maybelist.data"
 pub type PersistenceStatus {
   Loading
   Ready
-  PersistenceFailed
+  Failed
+}
+
+pub type Editing {
+  Editing(item_id: item_list.ItemId, draft: String)
 }
 
 pub type Model {
   Model(
     item_list: item_list.ItemList,
     new_item_draft: String,
-    editing_item_id: Option(item_list.ItemId),
-    edit_draft: String,
+    editing: Option(Editing),
     persistence_status: PersistenceStatus,
   )
 }
 
 pub type Msg {
-  UpdateNewItemDraft(String)
-  SubmitNewItem
-  NewItemReady(item_list.ItemId, String)
-  StartEditing(item_list.ItemId, String)
-  UpdateEditDraft(String)
-  SaveEdit(item_list.ItemId)
-  CancelEdit
-  ToggleDecided(item_list.ItemId)
-  RequestDeleteItem(item_list.ItemId)
-  DeleteItem(item_list.ItemId)
-  StorageLoaded(local_storage.LoadResult(item_list.ItemList))
-  StorageSaved(local_storage.SaveResult)
+  UserChangedNewItemDraft(String)
+  UserSubmittedNewItem
+  BrowserGeneratedItemId(item_list.ItemId, String)
+  UserStartedEditingItem(item_list.ItemId, String)
+  UserChangedEditDraft(String)
+  UserSubmittedItemEdit
+  UserCancelledItemEdit
+  UserToggledItemDecision(item_list.ItemId)
+  UserRequestedItemDeletion(item_list.ItemId)
+  UserConfirmedItemDeletion(item_list.ItemId)
+  LocalStorageReturnedItemList(local_storage.LoadResult(item_list.ItemList))
+  LocalStorageReturnedSaveResult(local_storage.SaveResult)
 }
 
 pub fn init(_arguments: Nil) -> #(Model, Effect(Msg)) {
@@ -52,27 +55,26 @@ pub fn init(_arguments: Nil) -> #(Model, Effect(Msg)) {
     Model(
       item_list: item_list.example(),
       new_item_draft: "",
-      editing_item_id: None,
-      edit_draft: "",
+      editing: None,
       persistence_status: Loading,
     ),
     local_storage.load(
       key: storage_key,
       reader: serialization.decoder(),
       writer: serialization.encode,
-      to_message: StorageLoaded,
+      to_message: LocalStorageReturnedItemList,
     ),
   )
 }
 
 pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
   case message {
-    UpdateNewItemDraft(value) -> #(
+    UserChangedNewItemDraft(value) -> #(
       Model(..model, new_item_draft: value),
       effect.none(),
     )
-    SubmitNewItem -> #(model, create_item(model.new_item_draft))
-    NewItemReady(id, title) -> {
+    UserSubmittedNewItem -> #(model, generate_item_id(model.new_item_draft))
+    BrowserGeneratedItemId(id, title) -> {
       let updated_list = item_list.add(model.item_list, id, title)
       case updated_list == model.item_list {
         True -> #(model, effect.none())
@@ -83,75 +85,73 @@ pub fn update(model: Model, message: Msg) -> #(Model, Effect(Msg)) {
         }
       }
     }
-    StartEditing(id, title) -> #(
-      Model(..model, editing_item_id: Some(id), edit_draft: title),
+    UserStartedEditingItem(id, title) -> #(
+      Model(..model, editing: Some(Editing(id, title))),
       effect.none(),
     )
-    UpdateEditDraft(value) -> #(
-      Model(..model, edit_draft: value),
-      effect.none(),
-    )
-    SaveEdit(id) ->
-      case string.trim(model.edit_draft) {
-        "" -> #(model, effect.none())
-        _ -> {
-          let updated =
-            Model(
-              ..model,
-              item_list: item_list.rename(
-                item_list: model.item_list,
-                id: id,
-                title: model.edit_draft,
-              ),
-              editing_item_id: None,
-              edit_draft: "",
-            )
-          #(updated, save_to_local_storage(updated.item_list))
-        }
+    UserChangedEditDraft(value) ->
+      case model.editing {
+        Some(Editing(id, _)) -> #(
+          Model(..model, editing: Some(Editing(id, value))),
+          effect.none(),
+        )
+        None -> #(model, effect.none())
       }
-    CancelEdit -> #(
-      Model(..model, editing_item_id: None, edit_draft: ""),
-      effect.none(),
-    )
-    ToggleDecided(id) -> {
+    UserSubmittedItemEdit ->
+      case model.editing {
+        None -> #(model, effect.none())
+        Some(Editing(id, draft)) ->
+          case string.trim(draft) {
+            "" -> #(model, effect.none())
+            _ -> {
+              let updated =
+                Model(
+                  ..model,
+                  item_list: item_list.rename(
+                    item_list: model.item_list,
+                    id: id,
+                    title: draft,
+                  ),
+                  editing: None,
+                )
+              #(updated, save_to_local_storage(updated.item_list))
+            }
+          }
+      }
+    UserCancelledItemEdit -> #(Model(..model, editing: None), effect.none())
+    UserToggledItemDecision(id) -> {
       let updated =
         Model(..model, item_list: item_list.toggle_decided(model.item_list, id))
       #(updated, save_to_local_storage(updated.item_list))
     }
-    RequestDeleteItem(id) -> #(
+    UserRequestedItemDeletion(id) -> #(
       model,
       confirmation.ask(
         "Delete this possibility? This decision is suspiciously permanent.",
-        on_confirmation: DeleteItem(id),
+        on_confirmation: UserConfirmedItemDeletion(id),
       ),
     )
-    DeleteItem(id) -> {
+    UserConfirmedItemDeletion(id) -> {
       let updated =
-        Model(
-          ..model,
-          item_list: item_list.delete(model.item_list, id),
-          editing_item_id: case model.editing_item_id {
-            Some(editing_id) if editing_id == id -> None
-            _ -> model.editing_item_id
-          },
-        )
+        Model(..model, item_list: item_list.delete(model.item_list, id))
+
       #(updated, save_to_local_storage(updated.item_list))
     }
-    StorageLoaded(result) -> #(
+    LocalStorageReturnedItemList(result) -> #(
       case result {
         local_storage.Loaded(saved_list) ->
           Model(..model, item_list: saved_list, persistence_status: Ready)
         local_storage.Missing -> Model(..model, persistence_status: Ready)
         local_storage.InvalidData | local_storage.LoadUnavailable ->
-          Model(..model, persistence_status: PersistenceFailed)
+          Model(..model, persistence_status: Failed)
       },
       effect.none(),
     )
-    StorageSaved(result) -> #(
+    LocalStorageReturnedSaveResult(result) -> #(
       case result {
         local_storage.Saved -> Model(..model, persistence_status: Ready)
         local_storage.WriteFailed | local_storage.SaveUnavailable ->
-          Model(..model, persistence_status: PersistenceFailed)
+          Model(..model, persistence_status: Failed)
       },
       effect.none(),
     )
@@ -164,12 +164,14 @@ fn save_to_local_storage(item_list: item_list.ItemList) -> Effect(Msg) {
     value: item_list,
     reader: serialization.decoder(),
     writer: serialization.encode,
-    to_message: StorageSaved,
+    to_message: LocalStorageReturnedSaveResult,
   )
 }
 
-fn create_item(title: String) -> Effect(Msg) {
-  effect.from(fn(dispatch) { dispatch(NewItemReady(uuid.v4(), title)) })
+fn generate_item_id(title: String) -> Effect(Msg) {
+  effect.from(fn(dispatch) {
+    dispatch(BrowserGeneratedItemId(uuid.v4(), title))
+  })
 }
 
 pub fn view(model: Model) -> Element(Msg) {
@@ -245,7 +247,7 @@ fn persistence_notice(status: PersistenceStatus) -> Element(Msg) {
         html.text("Recovering your unresolved business…"),
       ])
     Ready -> html.text("")
-    PersistenceFailed ->
+    Failed ->
       html.p(
         [
           attribute.class(
@@ -306,7 +308,7 @@ fn header_view() -> Element(Msg) {
 fn add_form(model: Model) -> Element(Msg) {
   html.form(
     [
-      event.on_submit(fn(_) { SubmitNewItem }),
+      event.on_submit(fn(_) { UserSubmittedNewItem }),
       attribute.class(
         "group flex gap-2 rounded-2xl border border-stone-200 bg-white p-2 shadow-sm transition focus-within:border-stone-400 focus-within:shadow-md",
       ),
@@ -322,7 +324,7 @@ fn add_form(model: Model) -> Element(Msg) {
         attribute.class(
           "min-w-0 flex-1 bg-transparent px-3 py-2.5 text-base outline-none placeholder:text-stone-400",
         ),
-        event.on_input(UpdateNewItemDraft),
+        event.on_input(UserChangedNewItemDraft),
       ]),
       html.button(
         [
@@ -367,10 +369,6 @@ fn item_list(model: Model) -> Element(Msg) {
 
 fn item_view(item: item_list.Item, model: Model) -> Element(Msg) {
   let item_list.Item(id, title, decided) = item
-  let is_editing = case model.editing_item_id {
-    Some(editing_id) -> editing_id == id
-    None -> False
-  }
   html.li(
     [
       attribute.class(
@@ -381,9 +379,9 @@ fn item_view(item: item_list.Item, model: Model) -> Element(Msg) {
         #("border-lime-200 bg-lime-50/40", decided),
       ]),
     ],
-    case is_editing {
-      True -> edit_view(id, model.edit_draft)
-      False -> display_view(id, title, decided)
+    case model.editing {
+      Some(Editing(editing_id, draft)) if editing_id == id -> edit_view(draft)
+      _ -> display_view(id, title, decided)
     },
   )
 }
@@ -398,7 +396,7 @@ fn display_view(
       html.button(
         [
           attribute.type_("button"),
-          event.on_click(ToggleDecided(id)),
+          event.on_click(UserToggledItemDecision(id)),
           attribute.aria_label(case decided {
             True -> "Return to maybe"
             False -> "Mark as decided"
@@ -440,19 +438,19 @@ fn display_view(
           ),
         ],
         [
-          icon_button("Edit", "✎", StartEditing(id, title)),
-          icon_button("Delete", "×", RequestDeleteItem(id)),
+          icon_button("Edit", "✎", UserStartedEditingItem(id, title)),
+          icon_button("Delete", "×", UserRequestedItemDeletion(id)),
         ],
       ),
     ]),
   ]
 }
 
-fn edit_view(id: item_list.ItemId, value: String) -> List(Element(Msg)) {
+fn edit_view(value: String) -> List(Element(Msg)) {
   [
     html.form(
       [
-        event.on_submit(fn(_) { SaveEdit(id) }),
+        event.on_submit(fn(_) { UserSubmittedItemEdit }),
         attribute.class("flex items-center gap-2 p-3 sm:p-4"),
       ],
       [
@@ -464,7 +462,7 @@ fn edit_view(id: item_list.ItemId, value: String) -> List(Element(Msg)) {
           attribute.class(
             "min-w-0 flex-1 rounded-xl border border-stone-300 bg-stone-50 px-3 py-2 text-sm outline-none transition focus:border-stone-600 focus:bg-white",
           ),
-          event.on_input(UpdateEditDraft),
+          event.on_input(UserChangedEditDraft),
         ]),
         html.button(
           [
@@ -478,7 +476,7 @@ fn edit_view(id: item_list.ItemId, value: String) -> List(Element(Msg)) {
         html.button(
           [
             attribute.type_("button"),
-            event.on_click(CancelEdit),
+            event.on_click(UserCancelledItemEdit),
             attribute.class(
               "rounded-lg px-2 py-2 text-sm font-medium text-stone-500 hover:bg-stone-100 hover:text-stone-900",
             ),
