@@ -36,7 +36,9 @@ Then open <http://localhost:1234>.
 
 ## Run with time travel
 
-The optional development entry point wraps the app with a time-travel inspector:
+The optional development entry point at `dev/maybelist_dev.gleam` wraps the app
+with a time-travel inspector. Its location keeps `timetravel` as a development
+dependency and out of production builds.
 
 ```sh
 gleam run -m lustre/dev start maybelist_dev
@@ -49,19 +51,21 @@ state. The normal `maybelist` entry point does not include the debugger.
 
 ### Add time travel to another Lustre app
 
-Time travel is distributed as a tagged Git dependency. Add it to the
-application's `gleam.toml`:
+Add time travel as a development dependency:
+
+```sh
+gleam add --dev timetravel
+```
+
+This adds it to the application's `gleam.toml`:
 
 ```toml
-[dependencies]
-timetravel = {
-  git = "https://github.com/bmehder/timetravel.git",
-  ref = "v0.2.0",
-}
+[dev_dependencies]
+timetravel = ">= 0.2.2 and < 1.0.0"
 ```
 
 Keep the application's normal production entry point unchanged. Add a separate
-development entry point, such as `src/my_app_dev.gleam`:
+development entry point, such as `dev/my_app_dev.gleam`:
 
 ```gleam
 import lustre
